@@ -1,0 +1,130 @@
+---
+title: "01_data_prep"
+author: "Jagadeesh Puvvula"
+date: "2025-06-30"
+output: pdf_document
+---
+
+```{r}
+# Get all imputed exposure data
+exp_dat <- list.files("~/Documents/data/imputed", pattern = "\\.csv$", full.names = TRUE) |> 
+  discard(~ str_detect(.x, "creat_sg\\.csv$")) |> 
+  map_dfr(read_csv) |> 
+  bind_rows(
+    read_csv("~/Documents/data/imputed/creat_sg.csv") |> 
+      pivot_longer(
+        cols = c(creat, specific_gravity),
+        names_to = "analyte",
+        values_to = "result.res"
+      )
+  ) |>
+  clean_names()
+
+save(exp_dat, file = "~/Documents/home_wisc_brief/data/home_exp.rda")
+```
+
+#load saved exposure dataset
+```{r}
+load("~/Documents/home_wisc_brief/data/home_exp.rda") 
+
+exp_dat<- exp_dat |>
+  mutate(
+    visit = tolower(visit),
+    visit = if_else(visit == "p3", "M84", visit),
+    visit = as.factor(visit)
+  ) |>
+  filter(!visit %in% c("p4")) |>
+  mutate(analyte = toupper(analyte),
+         visit = toupper(visit)) |>
+  filter(analyte %in% 
+           c(
+             "THG", "PB", "AS", "DMA", "CD_URINE",  #metals 
+             "DPHP", "DBUP", "BCETP", "BDCPP", #OPEs
+             "PBDE100", "PBDE153", "PBDE28","PBDE47", "PBDE99", #PBDEs
+             "PCB118", "PCB138_158", "PCB153", "PCB180", "PCB74", "PCB99", #PCBs
+             "PFHXS", "PFNA", "PFOA", "PFOS", #PFAS
+             "PPB", "MPB", "MPB", #Parabens
+             "DDE", "DDT", #organochlorine pesticides
+             "DETP", "DEP", "DMP", "DMTP", #organophosphate pesticides
+             "3PBA", "4FPBA", #pyrethroids
+             "BPA", "BP3", "TCS", "24DCP", "25DCP", #phenols/PCP
+             "MBP",  "MBZP", "MCNP", "MCOP", "MCPP",  "MECPP",  "MEHHP", "MEHP","MEOHP", "MEP", "MIBP" #Phthalates
+           )) |>
+  mutate(
+    class = case_when(
+      analyte %in% c("THG", "PB", "AS", "DMA", "CD_URINE") ~ "Metals",
+      analyte %in% c("DPHP", "DBUP", "BCETP", "BDCPP") ~ "OPEs",
+      analyte %in% c("PBDE100", "PBDE153", "PBDE28", "PBDE47", "PBDE99") ~ "PBDEs",
+      analyte %in% c("PCB118", "PCB138_158", "PCB153", "PCB180", "PCB74", "PCB99") ~ "PCBs",
+      analyte %in% c("PFHXS", "PFNA", "PFOA", "PFOS") ~ "PFAS",
+      analyte %in% c("PPB", "MPB") ~ "Parabens",
+      analyte %in% c("DDE", "DDT") ~ "Organochlorine Pesticides",
+      analyte %in% c("DETP", "DEP", "DMP", "DMTP") ~ "Organophosphate Pesticides",
+      analyte %in% c("3PBA", "4FPBA") ~ "Pyrethroids",
+      analyte %in% c("BPA", "BP3", "TCS", "24DCP", "25DCP") ~ "Phenols/PCP",
+      analyte %in% c("MBP", "MBZP", "MCNP", "MCOP", "MCPP", "MECPP", "MEHHP", "MEHP", "MEOHP", "MEP", "MIBP") ~ "Phthalates",
+      TRUE ~ NA_character_
+    )
+  ) |>
+  mutate(across(where(is.character), as.factor))
+```
+
+#visualize missing data
+```{r}
+exp_dat_viz <- exp_dat |> 
+  mutate(unmeasured = if_else(is.na(result_res), 
+                              "Un-measured", "Measured"),
+         subject_id = as.factor(subject_id),
+         analyte_visit = paste(analyte, visit, sep = "-"))
+
+ggplot(exp_dat_viz |> filter(class == "Metals"), aes(y = analyte_visit, x = subject_id, fill = unmeasured)) +
+    geom_tile(color = "white") +
+    scale_fill_manual(values = c("Un-measured" = "red", "Measured" = "royalblue")) +
+    labs(
+        y = "Analyte",
+        x = "Subject ID",
+        fill = " "
+    ) +
+    theme_minimal() +
+    theme(
+      axis.text.x = element_blank(),
+      axis.ticks.x = element_blank(),
+      legend.position = "none")
+```
+
+```{r}
+classes <- c(
+  "Metals", "OPEs", "Organochlorine Pesticides",
+  "Organophosphate Pesticides", "Parabens", "PBDEs",
+  "PCBs", "PFAS", "Phenols/PCP", "Phthalates", "Pyrethroids"
+)
+
+make_tile_plot <- function(df, class_name) {
+  df |> 
+    filter(class == class_name) |> 
+    ggplot(aes(y = analyte_visit, x = subject_id, fill = unmeasured)) +
+    geom_tile(color = "white") +
+    scale_fill_manual(values = c("Un-measured" = "red", "Measured" = "royalblue")) +
+    labs(
+      y = "Analyte",
+      x = "Subject ID",
+      title = class_name,
+      fill = " "
+    ) +
+    theme_minimal() +
+    theme(
+      axis.text.x = element_blank(),
+      axis.ticks.x = element_blank(),
+      legend.position = "none"
+    )
+}
+
+plots_list <- lapply(classes, function(cl) make_tile_plot(exp_dat_viz, cl))
+names(plots_list) <- classes
+
+```
+
+#outcome = WISC/BRIEF from HOME study
+
+
+

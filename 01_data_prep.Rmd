@@ -121,10 +121,192 @@ make_tile_plot <- function(df, class_name) {
 
 plots_list <- lapply(classes, function(cl) make_tile_plot(exp_dat_viz, cl))
 names(plots_list) <- classes
+```
 
+#standardize urinary biomarkers for urine specific gravity
+```{r}
+ur_sg<- read_csv("~/Documents/data/imputed/creat_sg.csv") |>
+  clean_names() |>
+  select(-c(3)) |>
+  group_by(visit) |>
+  mutate(median_sg = median(specific_gravity, na.rm = TRUE)) |>
+  ungroup()
+
+################################################################################
+#OPE, Parabens, Phenols/PCP, Phthalates, Pyrethroids
+#DMA, CD_URINE
+exp_dat_sg <- exp_dat |>
+  left_join(
+    ur_sg |> select(subject_id, visit, specific_gravity, median_sg),
+    by = c("subject_id", "visit")
+  ) |>
+  mutate(
+    sg_used = if_else(is.na(specific_gravity) | specific_gravity == 1, median_sg, specific_gravity),
+    result_res = if_else(
+      analyte %in% c("DMA", "CD_URINE") | class %in% c("OPE", "Paraben", "Phenols/PCP", "Phthalates", "Pyrethroids"),
+      result_res * ((median_sg - 1) / (sg_used - 1)),
+      result_res
+    )
+  ) |>
+  select(-specific_gravity, -median_sg, -sg_used)
+
+
+save(exp_dat_sg, file = "~/Documents/home_wisc_brief/data/home_exp_sg_adj.rda")
+```
+
+#volume of observations
+```{r}
+# Visit-wise counts (as before)
+visit_counts <- exp_dat_sg |>
+  count(class, analyte, visit) |>
+  pivot_wider(
+    names_from = visit,
+    values_from = n,
+    values_fill = 0
+  )
+
+# Total unique participant_id per class/analyte
+total_unique <- exp_dat_sg |>
+  distinct(class, analyte, subject_id) |>
+  count(class, analyte) |>
+  rename(Total_unq = n)
+
+# Join
+count_table <- visit_counts |>
+  left_join(total_unique, by = c("class", "analyte"))
+
+rm(visit_counts, total_unique)
+
+write_csv(count_table, "~/Documents/home_wisc_brief/result/exposure_cnt.csv")
+```
+
+
+#get AUC for exposures
+```{r}
+#get gestational age
+ga_w<- haven::read_sas("~/Documents/data/covariates.sas7bdat") |>
+  clean_names() |>
+  select(c(1,57)) |>
+  rename(ga = gest_age)
+
+exp_df_auc <- exp_dat_sg |>
+  filter(visit != "CORD") |>
+  mutate(result_res = if_else(
+    analyte == "DBUP" & visit %in% c("M12", "M24"),
+    NA_real_,
+    result_res
+  )) |>
+  mutate(
+    visit = recode(visit, 
+                   "16W" = "16",
+                   "26W" = "26",
+                   "BIRTH" = "delivery")
+  )|>
+  mutate(
+    visit = case_when(
+      visit == "delivery" ~ as.character(
+        ifelse(is.na(ga_w$ga[match(subject_id, ga_w$subject_id)]),
+               39,
+               ga_w$ga[match(subject_id, ga_w$subject_id)])
+      ),
+      visit == "M12" ~ as.character(
+        ifelse(is.na(ga_w$ga[match(subject_id, ga_w$subject_id)]),
+               39,
+               ga_w$ga[match(subject_id, ga_w$subject_id)]) + 52
+      ),
+      visit == "M24" ~ as.character(
+        ifelse(is.na(ga_w$ga[match(subject_id, ga_w$subject_id)]),
+               39,
+               ga_w$ga[match(subject_id, ga_w$subject_id)]) + 104
+      ),
+      visit == "M36" ~ as.character(
+        ifelse(is.na(ga_w$ga[match(subject_id, ga_w$subject_id)]),
+               39,
+               ga_w$ga[match(subject_id, ga_w$subject_id)]) + 156
+      ),
+      visit == "M48" ~ as.character(
+        ifelse(is.na(ga_w$ga[match(subject_id, ga_w$subject_id)]),
+               39,
+               ga_w$ga[match(subject_id, ga_w$subject_id)]) + 208
+      ),
+      visit == "M60" ~ as.character(
+        ifelse(is.na(ga_w$ga[match(subject_id, ga_w$subject_id)]),
+               39,
+               ga_w$ga[match(subject_id, ga_w$subject_id)]) + 260
+      ),
+      visit == "M84" ~ as.character(
+        ifelse(is.na(ga_w$ga[match(subject_id, ga_w$subject_id)]),
+               39,
+               ga_w$ga[match(subject_id, ga_w$subject_id)]) + 364
+      ),
+      TRUE ~ visit
+    )
+  ) |>
+  mutate(
+    visit = as.numeric(visit),
+    visit = round(visit)
+  ) |>
+  select(c(1:4)) |>
+  group_by(subject_id, visit, analyte) |> 
+  summarise(result_res = mean(result_res, na.rm = TRUE), .groups = "drop") |> 
+  pivot_wider(
+    names_from = analyte,
+    values_from = result_res
+  ) |>
+  rename(participant_id = subject_id)
+```
+
+# AUC calculation implementation
+```{r}
+auc_life <- calculate_metabolite_aucs(exp_df_auc)
+
+write_csv(auc_life, "~/Documents/home_wisc_brief/data/exp_life_auc.csv")
 ```
 
 #outcome = WISC/BRIEF from HOME study
+```{r}
+out_df<- haven::read_sas("~/Documents/data/outcomes.sas7bdat") |>
+  clean_names() |>
+  select(1, 2, starts_with("wisc"), starts_with("brief")) |>
+  filter(visit == "P3") |>
+  select(where(~ !all(is.na(.)))) |>
+  rename_with(~ gsub("_", "-", toupper(.x)))
+#have 15 variables all are in t-score scales
+#229 participants with BRIEF and 221 have WISC scores
+
+save(out_df, file = "~/Documents/home_wisc_brief/data/home_wisc_brief_p3.rda")
+
+#outcome correlation matrix
+cor_matrix <- cor(out_df[, 3:18], use = "pairwise.complete.obs", method = "spearman")
+
+cor_long <- as.data.frame(as.table(cor_matrix))
+names(cor_long) <- c("Var1", "Var2", "Correlation")
+
+ggplot(cor_long, aes(Var1, Var2, fill = Correlation)) +
+  geom_tile() +
+  scale_fill_gradient2(
+    low = "#D55E00",   
+    high = "royalblue",
+    mid = "white",
+    midpoint = 0,
+    limit = c(-1, 1),
+    space = "Lab"
+  ) +
+  theme_minimal() +
+  labs(title = " ", x = "", y = "") +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "bottom"
+  )
+```
+
+
+
+
+
+
+
+
 
 
 

@@ -1,0 +1,73 @@
+---
+title: "02_analy_prelim"
+author: "Jagadeesh Puvvula"
+date: "2025-07-15"
+output: pdf_document
+---
+
+#exposure and outcome data
+```{r}
+load("~/Documents/home_wisc_brief/data/home_wisc_brief_p3.rda")
+out_df<- out_df |> clean_names() |>
+  select(-c(2))
+
+exp_auc<- read_csv("~/Documents/home_wisc_brief/data/exp_life_auc.csv") |>
+  rename(subject_id = participant_id) |>
+  filter(subject_id %in% out_df$subject_id)
+
+analy_df<- left_join(exp_auc, out_df, by = "subject_id")
+```
+
+#heat map missing pattern
+```{r}
+desired_order <- c(
+  "THG", "PB", "AS", "DMA", "CD_URINE",  # metals 
+  "DPHP", "DBUP", "BCETP", "BDCPP",      # OPEs
+  "PBDE100", "PBDE153", "PBDE28", "PBDE47", "PBDE99", # PBDEs
+  "PCB118", "PCB138_158", "PCB153", "PCB180", "PCB74", "PCB99", # PCBs
+  "PFHXS", "PFNA", "PFOA", "PFOS",       # PFAS
+  "PPB", "MPB",                          # Parabens
+  "DDE", "DDT",                         # organochlorine pesticides
+  "DETP", "DEP", "DMP", "DMTP",          # organophosphate pesticides
+  "3PBA", "4FPBA",                       # pyrethroids
+  "BPA", "BP3", "TCS", "24DCP", "25DCP", # phenols/PCP
+  "MBP", "MBZP", "MCNP", "MCOP", "MCPP", "MECPP", "MEHHP", "MEHP", "MEOHP", "MEP", "MIBP", # Phthalates
+  "wisc_fsiq", "wisc_vci", "wisc_pri", "wisc_wmi", "wisc_psi",
+  "brief_inhibit", "brief_mon", "brief_shift", "brief_ec", "brief_initiate",
+  "brief_wm", "brief_po", "brief_om", "brief_bri", "brief_mi", "brief_gec"
+)
+
+analy_df |>
+  select(c(2:67)) |>
+  mutate(row_id = row_number()) |>
+  pivot_longer(-row_id, names_to = "variable", values_to = "value") |>
+  mutate(
+    missing = if_else(is.na(value), "NA", "Not NA"),
+    variable = factor(variable, levels = desired_order)
+  ) |>
+  ggplot(aes(y = variable, x = row_id, fill = missing)) +
+  geom_tile(color = "white") +
+  scale_fill_manual(values = c("NA" = "gray99", "Not NA" = "steelblue")) +
+  labs(x = NULL, y = NULL, fill = NULL) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_blank(),
+    axis.text.y = element_text(color = "black"),
+    legend.position = "none",
+    panel.grid = element_blank()
+  ) +
+  coord_cartesian(expand = FALSE)
+
+
+ggsave(
+  filename = "~/Documents/home_wisc_brief/result/missing_data_pattern.tiff",
+  device = "tiff",
+  dpi = 300,
+  width = 9,
+  height = 10,
+  units = "in",
+  bg = "white"
+)
+
+```
+

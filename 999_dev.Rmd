@@ -1,0 +1,80 @@
+---
+title: "999_dev"
+author: "Jagadeesh Puvvula"
+date: "2025-07-15"
+output: pdf_document
+---
+
+# Calculate AUC - applying logic as discussed with aimin
+```{r}
+calculate_auc <- function(times, concentrations) {
+  # Remove NA concentrations and corresponding times
+  valid_data <- data.frame(time = times, conc = concentrations) %>%
+    filter(!is.na(conc))
+  
+  # Sort data by time
+  ordered_data <- valid_data %>% arrange(time)
+  
+  # If no valid points, return NA
+  if(nrow(ordered_data) == 0) {
+    return(NA_real_)
+  }
+  
+  # If only one valid point, return that concentration value directly
+  if(nrow(ordered_data) == 1) {
+    return(ordered_data$conc[1])
+  }
+  
+  # Calculate AUC using trapezoidal rule
+  auc <- 0
+  for(i in 1:(nrow(ordered_data)-1)) {
+    time_diff <- ordered_data$time[i+1] - ordered_data$time[i]
+    avg_conc <- (ordered_data$conc[i+1] + ordered_data$conc[i]) / 2
+    auc <- auc + (time_diff * avg_conc)
+  }
+  
+  # Normalize AUC by total time span (last visit - first visit)
+  time_span <- max(ordered_data$time) - min(ordered_data$time)
+  normalized_auc <- auc / time_span
+  
+  return(normalized_auc)
+}
+```
+
+# Apply the AUC calculation to your dataset directly
+```{r}
+calculate_metabolite_aucs <- function(data) {
+  # Identify metabolite columns: all except participant_id and visit
+  metabolite_cols <- setdiff(names(data), c("participant_id", "visit"))
+  
+  # Get unique participant IDs
+  participants <- unique(data$participant_id)
+  
+  # Prepare a list to hold results for each participant
+  results_list <- vector("list", length(participants))
+  
+  for (i in seq_along(participants)) {
+    pid <- participants[i]
+    participant_data <- data |> dplyr::filter(participant_id == pid)
+    
+    # Compute AUC for every metabolite
+    auc_values <- sapply(
+      metabolite_cols,
+      function(metab) calculate_auc(participant_data$visit, participant_data[[metab]])
+    )
+    
+    # Store participant ID with their AUCs
+    results_list[[i]] <- c(participant_id = pid, auc_values)
+  }
+  
+  # Combine all into a single dataframe
+  results <- do.call(rbind, results_list) |> as.data.frame()
+  
+  # Make sure participant_id is numeric (if needed)
+  results$participant_id <- as.numeric(results$participant_id)
+  
+  # Return final dataframe
+  return(results)
+}
+```
+
